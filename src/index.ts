@@ -15,20 +15,40 @@ app.get("/stream", (_req: Request, res: Response) => {
   clients.add(res);
   res.write(`data: ${JSON.stringify({ connected: true })}\n\n`);
 
-  _req.on("close", () => {
+  res.on("close", () => {
+    clients.delete(res);
+  });
+
+  res.on("error", () => {
     clients.delete(res);
   });
 });
 
 app.post("/consume", (req: Request, res: Response) => {
-  const payload = req.body;
-  const data = `data: ${JSON.stringify(payload)}\n\n`;
-
-  for (const client of clients) {
-    client.write(data);
+  if (!req.is("application/json")) {
+    res.status(415).json({ error: "Content-Type must be application/json" });
+    return;
   }
 
-  res.status(202).json({ deliveredTo: clients.size });
+  const payload = req.body;
+  const data = `data: ${JSON.stringify(payload)}\n\n`;
+  let deliveredTo = 0;
+
+  for (const client of clients) {
+    if (client.writableEnded) {
+      clients.delete(client);
+      continue;
+    }
+
+    try {
+      client.write(data);
+      deliveredTo += 1;
+    } catch (_error) {
+      clients.delete(client);
+    }
+  }
+
+  res.status(202).json({ deliveredTo });
 });
 
 app.listen(port, () => {
